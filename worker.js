@@ -1,3 +1,4 @@
+// Force GitHub-connected Cloudflare rebuild; Tiingo diagnostic route is defined below.
 // FXWOLVER Cloudflare Worker API
 // Serves the existing static terminal and proxies market data without exposing secrets.
 // Crypto streaming remains the browser's public Binance WebSocket connection.
