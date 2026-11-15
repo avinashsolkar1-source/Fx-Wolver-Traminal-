@@ -396,18 +396,12 @@ function tickLoop(){
   afterTick();
 }
 function afterTick(){
-  checkStops();checkAlerts();paintWatch(); updateCandle(); paintQuote(); paintAccount();
-}
-function updateCandle(){
-  if(!candles.length||(active.closed&&active.src!=='Binance'))return;
-  const p=active.mid, now=Math.floor(Date.now()/1000), t=now-now%tf[1], last=candles[candles.length-1];
-  if(t>last.time){candles.push({time:t,open:last.close,high:Math.max(last.close,p),low:Math.min(last.close,p),close:p,volume:1});}
-  else{last.close=p;if(p>last.high)last.high=p;if(p<last.low)last.low=p;last.volume+=1;}
-  chart.draw();
+  checkStops();checkAlerts();paintWatch(); paintQuote(); paintAccount();
 }
 
 /* ---------- 5. Real crypto data (Binance public API, free, no key) ---------- */
 let ws=null,wsTry=0;
+let chartWs=null,chartWsTry=0,chartWsTimer=null,chartWsKey='',chartStreamConnected=false;
 function connectBinance(){
   try{
     const streams=INSTRUMENTS.filter(i=>i.binance).map(i=>i.binance.toLowerCase()+'@bookTicker').join('/');
@@ -425,6 +419,45 @@ function connectBinance(){
   ws.onerror=()=>{try{ws.close()}catch(e){}};
   ws.onclose=lost;
 }
+function connectChartKline(){
+  const inst=active;
+  if(chartWsTimer){clearTimeout(chartWsTimer);chartWsTimer=null;}
+  if(!inst.binance){
+    chartWsKey='';chartStreamConnected=false;
+    if(chartWs){try{chartWs.close()}catch(e){}chartWs=null;}
+    paintBadge();return;
+  }
+  if(!candles.length)return;
+  const key=inst.binance+'@kline_'+tf[2];
+  if(chartWsKey===key&&chartWs&&(chartWs.readyState===0||chartWs.readyState===1))return;
+  chartWsKey=key;chartStreamConnected=false;
+  if(chartWs){try{chartWs.close()}catch(e){}}
+  const socket=new WebSocket('wss://data-stream.binance.vision:443/stream?streams='+key.toLowerCase());
+  chartWs=socket;
+  socket.onopen=()=>{if(chartWs!==socket)return;chartWsTry=0;chartStreamConnected=true;paintBadge();};
+  socket.onmessage=ev=>{
+    if(chartWs!==socket)return;
+    try{
+      const payload=JSON.parse(ev.data),k=payload.data&&payload.data.k;
+      if(!k||payload.data.e!=='kline')return;
+      const candle={time:Math.floor(Number(k.t)/1000),open:Number(k.o),high:Number(k.h),low:Number(k.l),close:Number(k.c),volume:Number(k.v)};
+      if(![candle.time,candle.open,candle.high,candle.low,candle.close,candle.volume].every(Number.isFinite))return;
+      if(candle.open<=0||candle.low<=0||candle.high<candle.low||candle.high<Math.max(candle.open,candle.close)||candle.low>Math.min(candle.open,candle.close)||candle.volume<0)return;
+      const last=candles[candles.length-1];
+      if(last&&last.time===candle.time)candles[candles.length-1]=candle;
+      else if(!last||candle.time>last.time)candles.push(candle);
+      else return;
+      if(candles.length>500)candles=candles.slice(-500);
+      chart.draw();
+    }catch(e){}
+  };
+  socket.onerror=()=>{try{socket.close()}catch(e){}};
+  socket.onclose=()=>{
+    if(chartWs!==socket)return;
+    chartStreamConnected=false;paintBadge();
+    chartWsTimer=setTimeout(()=>{if(active.binance&&chartWsKey===key)connectChartKline();},Math.min(30000,5000*(++chartWsTry)));
+  };
+}
 async function loadCandles(){
   const inst=active, my=++loadToken;
   let c=null, src='none', sn='';
@@ -432,10 +465,10 @@ async function loadCandles(){
     $('#loading').classList.add('show');
     try{
       const ac=new AbortController(), to=setTimeout(()=>ac.abort(),4500);
-      const r=await fetch('https://api.binance.com/api/v3/klines?symbol='+inst.binance+'&interval='+tf[2]+'&limit=500',{signal:ac.signal,cache:'no-store'});
+      const r=await fetch('https://data-api.binance.vision/api/v3/klines?symbol='+inst.binance+'&interval='+tf[2]+'&limit=500',{signal:ac.signal,cache:'no-store'});
       clearTimeout(to); if(!r.ok)throw new Error('http '+r.status);
       const j=await r.json();
-      c=j.map(k=>({time:Math.floor(k[0]/1000),open:+k[1],high:+k[2],low:+k[3],close:+k[4],volume:+k[5]}));
+      c=j.map(k=>({time:Math.floor(Number(k[0])/1000),open:Number(k[1]),high:Number(k[2]),low:Number(k[3]),close:Number(k[4]),volume:Number(k[5])})).filter(x=>[x.time,x.open,x.high,x.low,x.close,x.volume].every(Number.isFinite)&&x.time>0&&x.open>0&&x.low>0&&x.high>=Math.max(x.open,x.close,x.low)&&x.low<=Math.min(x.open,x.close)&&x.volume>=0).sort((a,b)=>a.time-b.time).filter((x,n,a)=>n===0||x.time!==a[n-1].time);
       if(c.length){src='live';sn='Binance';const l=c[c.length-1].close;if(!inst.live){inst.mid=l;inst.bid=l-inst.spread/2;inst.ask=l+inst.spread/2;inst.base=l;inst.open=l;}}
     }catch(e){c=null;}
   }
@@ -444,7 +477,7 @@ async function loadCandles(){
   $('#loading').classList.remove('show');
   if(!c||!c.length){candles=[];source='none';srcName='';chart.setData([],inst);paintBadge();const L=$('#loading');L.textContent='NO LIVE DATA · retrying… (start with open_fxwolver.bat, internet on)';L.classList.add('show');setTimeout(()=>{if(my===loadToken)loadCandles();},6000);return;}
   $('#loading').textContent='LOADING MARKET DATA…';
-  candles=c;source=src;srcName=sn;chart.setData(c,inst);paintBadge();
+  candles=c;source=src;srcName=sn;chart.setData(c,inst);paintBadge();connectChartKline();
 }
 
 /* ---------- 6. Chart engine (canvas) ---------- */
@@ -638,9 +671,9 @@ function buildTfs(){
   $$('.tf').forEach(b=>b.onclick=()=>{tf=TFS.find(t=>t[0]===b.dataset.t);$$('.tf').forEach(x=>x.classList.toggle('on',x===b));stateSave();select(active,false);});
 }
 function paintBadge(){
-  const b=$('#badge'),live=source==='live',cl=live&&active.closed&&active.src!=='Binance';
-  b.className='databadge '+(live&&!cl?'live':'off');
-  b.innerHTML=!live?'NO LIVE DATA <u>feed offline · retrying</u>':cl?'MARKET CLOSED <u>last price · '+srcName+(active.t?' · '+tm(active.t*1000)+' UTC':'')+'</u>':'● LIVE <u>'+srcName+' market data</u>';
+  const b=$('#badge'),available=source==='live',binanceLive=available&&srcName==='Binance'&&chartStreamConnected,cl=available&&active.closed&&active.src!=='Binance';
+  b.className='databadge '+(binanceLive&&!cl?'live':'off');
+  b.innerHTML=!available?'NO MARKET DATA <u>feed unavailable · retrying</u>':cl?'MARKET CLOSED <u>last available price · '+srcName+(active.t?' · '+tm(active.t*1000)+' UTC':'')+'</u>':binanceLive?'● LIVE <u>Binance native OHLCV WebSocket</u>':srcName==='Binance'?'BINANCE HISTORY <u>connecting to live candle stream</u>':'REFERENCE FEED <u>'+srcName+' · real-time entitlement/latency not verified</u>';
 }
 function paintStatus(){
   const s=c=>{const l=INSTRUMENTS.filter(i=>i.cat===c&&i.live);return !l.length?'<b class="warn">OFFLINE</b>':l.every(i=>i.closed)?'<b class="warn">CLOSED · last price</b>':'<b class="ok">LIVE · '+l.find(i=>!i.closed).src+'</b>';};
