@@ -157,6 +157,39 @@ async function tiingoFxCandles(symbol, requested, env) {
   } catch { return null; }
 }
 
+async function tiingoFxCheck(symbol, env) {
+  const ticker = tiingoFxTicker(symbol);
+  if (!ticker) return { ok: false, reason: "unsupported_symbol" };
+  if (!env?.TIINGO_API_TOKEN) return { ok: false, reason: "missing_worker_secret" };
+  try {
+    const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
+      headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!res.ok) {
+      const reasons = { 401: "invalid_or_missing_token", 403: "account_or_endpoint_not_authorized", 429: "rate_limit_or_usage_limit" };
+      return { ok: false, httpStatus: res.status, reason: reasons[res.status] || "tiingo_http_error" };
+    }
+    const payload = await res.json();
+    const q = Array.isArray(payload) ? payload[0] : payload;
+    if (!q) return { ok: false, httpStatus: 200, reason: "empty_tiingo_response" };
+    const bid = Number(q.bidPrice), ask = Number(q.askPrice), mid = Number(q.midPrice);
+    const price = Number.isFinite(mid) && mid > 0 ? mid :
+      Number.isFinite(bid) && bid > 0 && Number.isFinite(ask) && ask >= bid ? (bid + ask) / 2 : null;
+    return {
+      ok: price !== null,
+      httpStatus: 200,
+      ticker,
+      fields: Object.keys(q),
+      ...(price !== null ? { midPrice: Number.isFinite(mid) ? mid : price } : {}),
+      quoteTimestamp: q.quoteTimestamp || null,
+      reason: price === null ? "quote_fields_missing_or_invalid" : "connected"
+    };
+  } catch {
+    return { ok: false, reason: "network_or_response_error" };
+  }
+}
+
 async function getQuote(symbol, env) {
   const institutionalFx = await tiingoFxQuote(symbol, env);
   if (institutionalFx) return institutionalFx;
@@ -242,7 +275,7 @@ async function candles(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/api/health") {
+    if (url.pathname === "/api/tiingo-check" && request.method === "GET") {\n      const symbol = url.searchParams.get("s") || "EURUSD=X";\n      return json(await tiingoFxCheck(symbol, env));\n    }\n    if (url.pathname === "/api/health") {
       return json({ ok: true, service: "FXWOLVER market-data API", timestamp: new Date().toISOString() });
     }
     if (url.pathname === "/api/quotes" && request.method === "GET") return quotes(request, env);
