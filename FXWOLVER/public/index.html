@@ -434,7 +434,7 @@ function connectChartKline(){
   if(chartWs){try{chartWs.close()}catch(e){}}
   const socket=new WebSocket('wss://data-stream.binance.vision:443/stream?streams='+key.toLowerCase());
   chartWs=socket;
-  socket.onopen=()=>{if(chartWs!==socket)return;chartWsTry=0;chartStreamConnected=true;paintBadge();};
+  socket.onopen=()=>{if(chartWs!==socket)return;chartWsTry=0;chartStreamConnected=true;source='live';srcName='Binance';paintBadge();};
   socket.onmessage=ev=>{
     if(chartWs!==socket)return;
     try{
