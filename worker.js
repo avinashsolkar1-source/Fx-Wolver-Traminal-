@@ -84,7 +84,80 @@ async function stooqQuote(symbol) {
   }
 }
 
-async function getQuote(symbol) {
+// Optional licensed institutional-quality spot FX feed (Tiingo).
+// Configure TIINGO_API_TOKEN as a Cloudflare Worker secret to enable it.
+// Tiingo documents top-of-book bid/ask and historical intraday OHLC bars.
+function tiingoFxTicker(symbol) {
+  const match = String(symbol).toUpperCase().match(/^([A-Z]{3})([A-Z]{3})=X$/);
+  return match ? (match[1] + match[2]).toLowerCase() : null;
+}
+async function tiingoFxQuote(symbol, env) {
+  const ticker = tiingoFxTicker(symbol);
+  if (!ticker || !env?.TIINGO_API_TOKEN) return null;
+  try {
+    const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
+      headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    const q = Array.isArray(payload) ? payload[0] : payload;
+    if (!q) return null;
+    const bid = Number(q.bidPrice), ask = Number(q.askPrice);
+    const mid = Number(q.midPrice);
+    const last = Number(q.lastPrice);
+    const price = Number.isFinite(mid) && mid > 0 ? mid :
+      Number.isFinite(bid) && bid > 0 && Number.isFinite(ask) && ask >= bid ? (bid + ask) / 2 :
+      Number.isFinite(last) && last > 0 ? last : null;
+    if (!price) return null;
+    const stamp = Date.parse(q.quoteTimestamp || q.timestamp || "");
+    return {
+      p: price,
+      ...(Number.isFinite(bid) && bid > 0 ? { bid } : {}),
+      ...(Number.isFinite(ask) && ask >= bid ? { ask } : {}),
+      t: Number.isFinite(stamp) ? Math.floor(stamp / 1000) : null,
+      provider: "Tiingo FX",
+      freshness: "licensed FX top-of-book feed"
+    };
+  } catch { return null; }
+}
+async function tiingoFxCandles(symbol, requested, env) {
+  const ticker = tiingoFxTicker(symbol);
+  if (!ticker || !env?.TIINGO_API_TOKEN) return null;
+  const intervals = { "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1hour", "1d": "1day" };
+  const resample = intervals[requested] || (requested === "4h" ? "1hour" : null);
+  if (!resample) return null;
+  try {
+    const url = "https://api.tiingo.com/tiingo/fx/" + ticker + "/prices?resampleFreq=" +
+      encodeURIComponent(resample) + "&token=" + encodeURIComponent(env.TIINGO_API_TOKEN);
+    const res = await fetch(url, { headers: { "Accept": "application/json" }, cf: { cacheTtl: 0, cacheEverything: false } });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    if (!Array.isArray(payload)) return null;
+    let rows = payload.map(q => ({
+      time: Math.floor(Date.parse(q.date) / 1000),
+      open: Number(q.open), high: Number(q.high), low: Number(q.low), close: Number(q.close),
+      volume: q.volume == null ? 0 : Number(q.volume)
+    })).filter(c => Number.isFinite(c.time) && c.time > 0 &&
+      [c.open,c.high,c.low,c.close,c.volume].every(Number.isFinite) &&
+      c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0 && c.volume >= 0 &&
+      c.high >= Math.max(c.open,c.close,c.low) && c.low <= Math.min(c.open,c.close,c.high))
+      .sort((a,b) => a.time-b.time);
+    if (requested === "4h") {
+      const buckets = new Map();
+      for (const candle of rows) {
+        const key = Math.floor(candle.time / 14400) * 14400;
+        const prior = buckets.get(key);
+        if (!prior) buckets.set(key, { ...candle, time: key });
+        else { prior.high=Math.max(prior.high,candle.high); prior.low=Math.min(prior.low,candle.low); prior.close=candle.close; prior.volume+=candle.volume; }
+      }
+      rows = [...buckets.values()];
+    }
+    return rows.slice(-500);
+  } catch { return null; }
+}
+
+async function getQuote(symbol, env) {
   const chart = await yahooChart(symbol, "1m", "1d");
   const meta = chart?.meta;
   if (meta && Number.isFinite(meta.regularMarketPrice) && meta.regularMarketPrice > 0) {
@@ -99,23 +172,23 @@ async function getQuote(symbol) {
   return await stooqQuote(symbol);
 }
 
-async function quotes(request) {
+async function quotes(request, env) {
   const url = new URL(request.url);
   const symbols = [...new Set((url.searchParams.get("s") || "")
     .split(",").map(s => s.trim()).filter(Boolean))].slice(0, 40);
   if (!symbols.length) return json({ error: "Add symbols with ?s=EURUSD=X,AAPL" }, 400);
-  const entries = await Promise.all(symbols.map(async symbol => [symbol, await getQuote(symbol)]));
+  const entries = await Promise.all(symbols.map(async symbol => [symbol, await getQuote(symbol, env)]));
   const result = {};
   for (const [symbol, value] of entries) if (value) result[symbol] = value;
   return json(result, 200, { "cache-control": "public, max-age=2, stale-while-revalidate=5" });
 }
 
-async function candles(request) {
+async function candles(request, env) {
   const url = new URL(request.url);
   const symbol = (url.searchParams.get("s") || "").trim();
   const requested = (url.searchParams.get("i") || "1h").toLowerCase();
   if (!symbol || symbol.length > 32) return json({ error: "A valid s symbol is required" }, 400);
-  const [interval, range] = INTERVALS[requested] || INTERVALS["1h"];
+  const institutionalFxCandles = await tiingoFxCandles(symbol, requested, env);\n  if (institutionalFxCandles) return json(institutionalFxCandles, 200, {\n    "cache-control": "public, max-age=2, stale-while-revalidate=5",\n    "x-market-data-provider": "Tiingo FX",\n    "x-market-data-freshness": "licensed FX historical OHLC"\n  });\n  const [interval, range] = INTERVALS[requested] || INTERVALS["1h"];
   const chart = await yahooChart(symbol, interval, range);
   if (!chart?.timestamp?.length || !chart?.indicators?.quote?.[0]) {
     return json({ error: "Historical market data is currently unavailable", candles: [] }, 502);
@@ -164,8 +237,8 @@ export default {
     if (url.pathname === "/api/health") {
       return json({ ok: true, service: "FXWOLVER market-data API", timestamp: new Date().toISOString() });
     }
-    if (url.pathname === "/api/quotes" && request.method === "GET") return quotes(request);
-    if (url.pathname === "/api/candles" && request.method === "GET") return candles(request);
+    if (url.pathname === "/api/quotes" && request.method === "GET") return quotes(request, env);
+    if (url.pathname === "/api/candles" && request.method === "GET") return candles(request, env);
     if (url.pathname.startsWith("/api/")) return json({ error: "API route not found" }, 404);
     return env.ASSETS.fetch(request);
   }
