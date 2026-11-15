@@ -129,8 +129,8 @@ async function tiingoFxCandles(symbol, requested, env) {
   if (!resample) return null;
   try {
     const url = "https://api.tiingo.com/tiingo/fx/" + ticker + "/prices?resampleFreq=" +
-      encodeURIComponent(resample) + "&token=" + encodeURIComponent(env.TIINGO_API_TOKEN);
-    const res = await fetch(url, { headers: { "Accept": "application/json" }, cf: { cacheTtl: 0, cacheEverything: false } });
+      encodeURIComponent(resample);
+    const res = await fetch(url, { headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" }, cf: { cacheTtl: 0, cacheEverything: false } });
     if (!res.ok) return null;
     const payload = await res.json();
     if (!Array.isArray(payload)) return null;
@@ -190,7 +190,13 @@ async function candles(request, env) {
   const symbol = (url.searchParams.get("s") || "").trim();
   const requested = (url.searchParams.get("i") || "1h").toLowerCase();
   if (!symbol || symbol.length > 32) return json({ error: "A valid s symbol is required" }, 400);
-  const institutionalFxCandles = await tiingoFxCandles(symbol, requested, env);\n  if (institutionalFxCandles) return json(institutionalFxCandles, 200, {\n    "cache-control": "public, max-age=2, stale-while-revalidate=5",\n    "x-market-data-provider": "Tiingo FX",\n    "x-market-data-freshness": "licensed FX historical OHLC"\n  });\n  const [interval, range] = INTERVALS[requested] || INTERVALS["1h"];
+  const institutionalFxCandles = await tiingoFxCandles(symbol, requested, env);
+  if (institutionalFxCandles) return json(institutionalFxCandles, 200, {
+    "cache-control": "public, max-age=2, stale-while-revalidate=5",
+    "x-market-data-provider": "Tiingo FX",
+    "x-market-data-freshness": "licensed FX historical OHLC"
+  });
+  const [interval, range] = INTERVALS[requested] || INTERVALS["1h"];
   const chart = await yahooChart(symbol, interval, range);
   if (!chart?.timestamp?.length || !chart?.indicators?.quote?.[0]) {
     return json({ error: "Historical market data is currently unavailable", candles: [] }, 502);
