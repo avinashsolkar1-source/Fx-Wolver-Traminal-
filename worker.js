@@ -158,6 +158,8 @@ async function tiingoFxCandles(symbol, requested, env) {
 }
 
 async function getQuote(symbol, env) {
+  const institutionalFx = await tiingoFxQuote(symbol, env);
+  if (institutionalFx) return institutionalFx;
   const chart = await yahooChart(symbol, "1m", "1d");
   const meta = chart?.meta;
   if (meta && Number.isFinite(meta.regularMarketPrice) && meta.regularMarketPrice > 0) {
