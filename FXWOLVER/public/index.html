@@ -642,13 +642,13 @@ function applyFilter(){
   $('#mwCount').textContent=shown+' symbols';
   if(searching&&!shown)$('#mwList').innerHTML+='';
 }
-function markDots(){INSTRUMENTS.forEach(i=>{const d=rows[i.symbol].dot;d.className=i.live?'live':'';d.title=i.live?'Live market data':'No live data';});}
+function markDots(){INSTRUMENTS.forEach(i=>{const d=rows[i.symbol].dot;d.className=i.live&&i.src==='Binance'?'live':'';d.title=i.src==='Binance'?'Live exchange bid/ask feed':'Reference price; real-time entitlement/latency not verified';});}
 function paintWatch(){
   INSTRUMENTS.forEach(i=>{
     const r=rows[i.symbol],cls=i.dir>0?' up':i.dir<0?' dn':'';
     if(!i.live){r.bid.textContent=r.ask.textContent='—';r.chg.textContent='';return;}
     const sb=i.bid.toFixed(i.digits),ch=r.lb!==sb&&r.init;r.lb=sb;r.init=1;
-    r.bid.innerHTML=fmtPx(i,i.bid);r.ask.innerHTML=fmtPx(i,i.ask);
+    r.bid.innerHTML=fmtPx(i,i.src==='Binance'?i.bid:i.mid);r.ask.textContent=i.src==='Binance'?i.ask.toFixed(i.digits):'—';
     r.bid.className='px bid'+cls;r.ask.className='px ask'+cls;
     if(ch)[r.bid,r.ask].forEach(e=>{e.classList.remove('f');void e.offsetWidth;e.classList.add('f');});
     const p=(i.mid/i.open-1)*100;r.chg.textContent=(p>=0?'+':'')+p.toFixed(2)+'%';r.chg.className='chg '+(p>=0?'pos':'neg');
@@ -678,7 +678,7 @@ function paintBadge(){
   b.innerHTML=!available?'NO MARKET DATA <u>feed unavailable · retrying</u>':cl?'MARKET CLOSED <u>last available price · '+srcName+(active.t?' · '+tm(active.t*1000)+' UTC':'')+'</u>':binanceLive?'● LIVE <u>Binance native OHLCV WebSocket</u>':srcName==='Binance'?'BINANCE HISTORY <u>connecting to live candle stream</u>':'REFERENCE FEED <u>'+srcName+' · real-time entitlement/latency not verified</u>';
 }
 function paintStatus(){
-  const s=c=>{const l=INSTRUMENTS.filter(i=>i.cat===c&&i.live);return !l.length?'<b class="warn">OFFLINE</b>':l.every(i=>i.closed)?'<b class="warn">CLOSED · last price</b>':'<b class="ok">LIVE · '+l.find(i=>!i.closed).src+'</b>';};
+  const s=c=>{const l=INSTRUMENTS.filter(i=>i.cat===c&&i.live);if(!l.length)return '<b class="warn">OFFLINE</b>';const x=l.find(i=>i.src==='Binance'&&!i.closed);return x?'<b class="ok">LIVE · Binance</b>':'<b class="warn">REFERENCE · '+(l[0].src||'provider')+'</b>';};
   $('#stData').innerHTML='Forex '+s('forex')+' &nbsp;·&nbsp; Crypto '+s('crypto')+' &nbsp;·&nbsp; US Stocks '+s('stocks');
 }
 function setView(v){$('#app').dataset.view=v;$$('#mobnav button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));setTimeout(()=>chart.resize(),30);}
@@ -788,9 +788,9 @@ async function pollQuotes(){
     const list=INSTRUMENTS.filter(i=>i.src!=='Binance'),r=await fetch('/api/quotes?s='+list.map(ysym).join(','),{cache:'no-store'});
     if(!r.ok)throw 0;const j=await r.json();
     list.forEach(i=>{const d=j[ysym(i)];if(!d||!d.p)return;const old=i.mid;
-      i.mid=i.base=d.p;i.bid=d.p-i.spread/2;i.ask=d.p+i.spread/2;i.open=d.prev||d.p;i.live=true;i.src='Yahoo Finance';i.t=d.t;
+      i.mid=i.base=d.p;i.bid=d.p;i.ask=d.p;i.spread=0;i.open=d.prev||d.p;i.live=true;i.src='Yahoo Finance';i.t=d.t;
       i.closed=Date.now()/1000-d.t>(i.cat==='crypto'?300:i.cat==='forex'?1200:1800);i.dir=d.p>=old?1:-1;});
-    markDots();paintStatus();paintBadge();if(!INSTRUMENTS.some(i=>i.live))$('#sMsg').textContent='No data yet — check internet';else $('#sMsg').textContent='Live data connected';
+    markDots();paintStatus();paintBadge();if(!INSTRUMENTS.some(i=>i.live))$('#sMsg').textContent='No data yet — check internet';else $('#sMsg').textContent='Market data connected';
   }catch(e){}
 }
 
