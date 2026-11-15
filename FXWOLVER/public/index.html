@@ -658,7 +658,9 @@ function paintQuote(){if(!active.live){$('#pSell').textContent=$('#pBuy').textCo
 
 /* ---------- 8. Selection, timeframes, badge, status ---------- */
 function select(i,mobile){
-  active=i;stateSave();$('#sl').value='';$('#tp').value='';
+  active=i;
+  if(chartWs){chartWsKey='';chartStreamConnected=false;try{chartWs.close()}catch(e){}chartWs=null;}
+  stateSave();$('#sl').value='';$('#tp').value='';
   $$('.mw-row').forEach(r=>r.classList.toggle('on',r.dataset.sym===i.symbol));
   $('#tSym').textContent=i.symbol;$('#tCat').textContent=CAT_LABEL[i.cat];$('#wm').textContent=i.symbol;
   paintQuote();
