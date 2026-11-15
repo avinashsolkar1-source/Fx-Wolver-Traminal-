@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Reset ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: #0d1117;
+  color: #e6edf3;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* ─── P&L colours ────────────────────────────────────────────────────────── */
+.pnl-positive { color: #26a69a; }
+.pnl-negative { color: #ef5350; }
+.pnl-zero     { color: #8b949e; }
+
+/* ─── Data-source badges ─────────────────────────────────────────────────── */
+.badge-sim {
+  display: inline-block;
+  background: #3d2200;
+  color: #f0c040;
+  border: 1px solid #5a3700;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1.6;
+}
+
+.badge-live {
+  display: inline-block;
+  background: #0d2016;
+  color: #26a69a;
+  border: 1px solid #1a4530;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1.6;
+}
+
+/* ─── Buy / Sell buttons ─────────────────────────────────────────────────── */
+.btn-buy {
+  background: #0d4f3c;
+  border: 1px solid #26a69a;
+  color: #26a69a;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-buy:hover:not(:disabled) {
+  background: #26a69a;
+  color: #000;
+}
+.btn-buy:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-sell {
+  background: #4f1a1a;
+  border: 1px solid #ef5350;
+  color: #ef5350;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-sell:hover:not(:disabled) {
+  background: #ef5350;
+  color: #fff;
+}
+.btn-sell:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── Panel header ───────────────────────────────────────────────────────── */
+.panel-header {
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* ─── Input style ────────────────────────────────────────────────────────── */
+.tx-input {
+  width: 100%;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #e6edf3;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.tx-input:focus { border-color: #388bfd; }
+.tx-input::placeholder { color: #484f58; }
+
+/* ─── Table ──────────────────────────────────────────────────────────────── */
+.tx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.tx-table th {
+  padding: 4px 8px;
+  text-align: left;
+  color: #8b949e;
+  font-weight: 500;
+  border-bottom: 1px solid #21262d;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: #161b22;
+  z-index: 1;
+}
+.tx-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid #21262d33;
+  white-space: nowrap;
+}
+.tx-table tr:hover td { background: rgba(255,255,255,0.03); }
