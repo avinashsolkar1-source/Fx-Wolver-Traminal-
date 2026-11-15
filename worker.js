@@ -68,13 +68,16 @@ async function stooqQuote(symbol) {
     const cols = rows[1].split(",");
     const price = Number(cols[3]);
     if (!Number.isFinite(price) || price <= 0) return null;
-    const previous = Number(cols[4]);
+    // Stooq's "p" field is percentage change, not previous-close price.
+    const changePct = Number(cols[4]);
+    const previous = Number.isFinite(changePct) ? price / (1 + changePct / 100) : null;
     const stamp = Date.parse(cols[1] + "T" + cols[2] + "Z") / 1000;
     return {
       p: price,
-      prev: Number.isFinite(previous) && previous > 0 ? previous : null,
+      ...(Number.isFinite(previous) && previous > 0 ? { prev: previous } : {}),
       t: Number.isFinite(stamp) ? stamp : Math.floor(Date.now() / 1000),
-      provider: "Stooq"
+      provider: "Stooq",
+      freshness: "provider timestamp; latency not guaranteed"
     };
   } catch {
     return null;
@@ -89,7 +92,8 @@ async function getQuote(symbol) {
       p: meta.regularMarketPrice,
       prev: meta.chartPreviousClose || meta.previousClose || null,
       t: meta.regularMarketTime || Math.floor(Date.now() / 1000),
-      provider: "Yahoo Finance"
+      provider: "Yahoo Finance",
+      freshness: "provider timestamp; real-time entitlement not verified"
     };
   }
   return await stooqQuote(symbol);
@@ -118,19 +122,20 @@ async function candles(request) {
   }
   const quote = chart.indicators.quote[0];
   let rows = [];
-  chart.timestamp.forEach((time, index) => {
-    const open = quote.open?.[index], high = quote.high?.[index];
-    const low = quote.low?.[index], close = quote.close?.[index];
-    if ([open, high, low, close].some(v => v == null || !Number.isFinite(Number(v)))) return;
-    rows.push({
-      time,
-      open: Number(open),
-      high: Number(high),
-      low: Number(low),
-      close: Number(close),
-      volume: Number(quote.volume?.[index] || 0)
-    });
+  chart.timestamp.forEach((rawTime, index) => {
+    const time = Number(rawTime);
+    const open = Number(quote.open?.[index]), high = Number(quote.high?.[index]);
+    const low = Number(quote.low?.[index]), close = Number(quote.close?.[index]);
+    const rawVolume = quote.volume?.[index];
+    const volume = rawVolume == null ? 0 : Number(rawVolume);
+    // Reject malformed OHLC rows. Never repair or synthesize a candle.
+    if (![time, open, high, low, close, volume].every(Number.isFinite)) return;
+    if (time <= 0 || open <= 0 || high <= 0 || low <= 0 || close <= 0 || volume < 0) return;
+    if (high < Math.max(open, close, low) || low > Math.min(open, close, high)) return;
+    rows.push({ time, open, high, low, close, volume });
   });
+  rows.sort((a, b) => a.time - b.time);
+  rows = rows.filter((c, i, all) => i === 0 || c.time !== all[i - 1].time);
   if (requested === "4h") {
     const buckets = new Map();
     for (const candle of rows) {
@@ -146,7 +151,11 @@ async function candles(request) {
     }
     rows = [...buckets.values()];
   }
-  return json(rows.slice(-500), 200, { "cache-control": "public, max-age=10, stale-while-revalidate=20" });
+  return json(rows.slice(-500), 200, {
+    "cache-control": "public, max-age=5, stale-while-revalidate=10",
+    "x-market-data-provider": "Yahoo Finance",
+    "x-market-data-freshness": "provider timestamp; real-time entitlement not verified"
+  });
 }
 
 export default {
