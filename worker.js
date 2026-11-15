@@ -275,7 +275,11 @@ async function candles(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/api/tiingo-check" && request.method === "GET") {\n      const symbol = url.searchParams.get("s") || "EURUSD=X";\n      return json(await tiingoFxCheck(symbol, env));\n    }\n    if (url.pathname === "/api/health") {
+    if (url.pathname === "/api/tiingo-check" && request.method === "GET") {
+      const symbol = url.searchParams.get("s") || "EURUSD=X";
+      return json(await tiingoFxCheck(symbol, env));
+    }
+    if (url.pathname === "/api/health") {
       return json({ ok: true, service: "FXWOLVER market-data API", timestamp: new Date().toISOString() });
     }
     if (url.pathname === "/api/quotes" && request.method === "GET") return quotes(request, env);
