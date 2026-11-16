@@ -31,6 +31,22 @@ const INTERVALS = {
   "1d": ["1d", "2y"]
 };
 
+
+function assessCandleQuality(rows, requested) {
+  const ageLimits = { "1m": 900, "5m": 2700, "15m": 7200, "1h": 28800, "4h": 86400, "1d": 345600 };
+  const now = Math.floor(Date.now()/1000);
+  const latest = rows.length ? rows[rows.length-1].time : 0;
+  const ageSeconds = latest ? Math.max(0, now-latest) : null;
+  const flatCount = rows.filter(x => x.open===x.high && x.high===x.low && x.low===x.close).length;
+  const flatRatio = rows.length ? flatCount/rows.length : 1;
+  const maxAge = ageLimits[requested] || ageLimits["1h"];
+  let reason = null;
+  if (rows.length < 10) reason = "insufficient_candles";
+  else if (ageSeconds === null || ageSeconds > maxAge) reason = "stale_candles";
+  else if (flatRatio > 0.8) reason = "mostly_flat_ohlc";
+  return { ok: !reason, reason, count: rows.length, latestTime: latest || null, ageSeconds, flatRatio: Number(flatRatio.toFixed(3)), maxAgeSeconds: maxAge };
+}
+
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -246,11 +262,14 @@ async function candles(request, env) {
   const requested = (url.searchParams.get("i") || "1h").toLowerCase();
   if (!symbol || symbol.length > 32) return json({ error: "A valid s symbol is required" }, 400);
   const institutionalFxCandles = await tiingoFxCandles(symbol, requested, env);
-  if (institutionalFxCandles) return json(institutionalFxCandles, 200, {
-    "cache-control": "public, max-age=60",
-    "x-market-data-provider": "Tiingo FX",
-    "x-market-data-freshness": "licensed FX historical OHLC"
-  });
+  if (institutionalFxCandles) {
+    const tiingoQuality = assessCandleQuality(institutionalFxCandles, requested);
+    if (tiingoQuality.ok) return json(institutionalFxCandles, 200, {
+      "cache-control": "public, max-age=60",
+      "x-market-data-provider": "Tiingo FX",
+      "x-market-data-freshness": "licensed FX historical OHLC"
+    });
+  }
   const [interval, range] = INTERVALS[requested] || INTERVALS["1h"];
   const chart = await yahooChart(symbol, interval, range);
   if (!chart?.timestamp?.length || !chart?.indicators?.quote?.[0]) {
@@ -272,6 +291,16 @@ async function candles(request, env) {
   });
   rows.sort((a, b) => a.time - b.time);
   rows = rows.filter((c, i, all) => i === 0 || c.time !== all[i - 1].time);
+  const quality = assessCandleQuality(rows, requested);
+  if (!quality.ok) return json({
+    error: "Provider returned stale or low-quality candles; refusing to display misleading chart data.",
+    candles: [],
+    diagnostic: { provider: "Yahoo Finance", ...quality }
+  }, 502, {
+    "cache-control": "no-store",
+    "x-market-data-provider": "Yahoo Finance",
+    "x-market-data-freshness": "rejected: " + quality.reason
+  });
   if (requested === "4h") {
     const buckets = new Map();
     for (const candle of rows) {
