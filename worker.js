@@ -191,6 +191,78 @@ async function tiingoFxCandles(symbol, requested, env) {
   } catch { return null; }
 }
 
+// Optional Twelve Data FX candles. This stays OFF until both the API key and
+// explicit enable flag are configured. Confirm commercial display/redistribution
+// rights with Twelve Data before enabling it for end users.
+function twelveDataFxSymbol(symbol) {
+  const match = String(symbol).toUpperCase().match(/^([A-Z]{3})([A-Z]{3})=X$/);
+  return match ? match[1] + "/" + match[2] : null;
+}
+
+async function twelveDataFxCandles(symbol, requested, env) {
+  const pair = twelveDataFxSymbol(symbol);
+  const apiKey = env?.TWELVE_DATA_API_KEY;
+  if (!pair || !apiKey || env?.TWELVE_DATA_ENABLED !== "true") return null;
+
+  const intervals = {
+    "1m": "1min", "5m": "5min", "15m": "15min",
+    "1h": "1h", "4h": "1h", "1d": "1day"
+  };
+  const interval = intervals[requested];
+  if (!interval) return null;
+  const outputsize = requested === "4h" ? 500 : 500;
+  const endpoint = new URL("https://api.twelvedata.com/time_series");
+  endpoint.searchParams.set("symbol", pair);
+  endpoint.searchParams.set("interval", interval);
+  endpoint.searchParams.set("outputsize", String(outputsize));
+  endpoint.searchParams.set("timezone", "UTC");
+
+  try {
+    const res = await fetch(endpoint.toString(), {
+      headers: { "Authorization": "apikey " + apiKey, "Accept": "application/json" },
+      cf: { cacheEverything: true, cacheTtl: requested === "1m" ? 5 : 30 }
+    });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    if (!Array.isArray(payload?.values) || payload.status === "error") return null;
+
+    let rows = payload.values.map(v => {
+      const stamp = Date.parse(String(v.datetime || "").replace(" ", "T") + "Z");
+      return {
+        time: Math.floor(stamp / 1000),
+        open: Number(v.open), high: Number(v.high),
+        low: Number(v.low), close: Number(v.close),
+        volume: v.volume == null ? 0 : Number(v.volume)
+      };
+    }).filter(c => Number.isFinite(c.time) && c.time > 0 &&
+      [c.open,c.high,c.low,c.close,c.volume].every(Number.isFinite) &&
+      c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0 && c.volume >= 0 &&
+      c.high >= Math.max(c.open,c.close,c.low) &&
+      c.low <= Math.min(c.open,c.close,c.high))
+      .sort((a,b) => a.time-b.time);
+
+    rows = rows.filter((c, i, all) => i === 0 || c.time !== all[i-1].time);
+    if (requested === "4h") {
+      const buckets = new Map();
+      for (const candle of rows) {
+        const key = Math.floor(candle.time / 14400) * 14400;
+        const prior = buckets.get(key);
+        if (!prior) buckets.set(key, { ...candle, time: key });
+        else {
+          prior.high = Math.max(prior.high, candle.high);
+          prior.low = Math.min(prior.low, candle.low);
+          prior.close = candle.close;
+          prior.volume += candle.volume;
+        }
+      }
+      rows = [...buckets.values()];
+    }
+    return rows.slice(-500);
+  } catch {
+    return null;
+  }
+}
+
 async function tiingoFxCheck(symbol, env) {
   const ticker = tiingoFxTicker(symbol);
   if (!ticker) return { ok: false, reason: "unsupported_symbol" };
@@ -268,6 +340,15 @@ async function candles(request, env) {
       "cache-control": "public, max-age=60",
       "x-market-data-provider": "Tiingo FX",
       "x-market-data-freshness": "licensed FX historical OHLC"
+    });
+  }
+  const twelveDataCandles = await twelveDataFxCandles(symbol, requested, env);
+  if (twelveDataCandles) {
+    const twelveQuality = assessCandleQuality(twelveDataCandles, requested);
+    if (twelveQuality.ok) return json(twelveDataCandles, 200, {
+      "cache-control": "public, max-age": requested === "1m" ? "5" : "30",
+      "x-market-data-provider": "Twelve Data",
+      "x-market-data-freshness": "provider timestamp; verify plan entitlement and redistribution rights"
     });
   }
   const [interval, range] = INTERVALS[requested] || INTERVALS["1h"];
