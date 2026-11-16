@@ -346,7 +346,7 @@ async function candles(request, env) {
   if (twelveDataCandles) {
     const twelveQuality = assessCandleQuality(twelveDataCandles, requested);
     if (twelveQuality.ok) return json(twelveDataCandles, 200, {
-      "cache-control": "public, max-age": requested === "1m" ? "5" : "30",
+      "cache-control": "public, max-age=" + (requested === "1m" ? "5" : "30"),
       "x-market-data-provider": "Twelve Data",
       "x-market-data-freshness": "provider timestamp; verify plan entitlement and redistribution rights"
     });
