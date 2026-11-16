@@ -76,7 +76,7 @@ async function stooqQuote(symbol) {
     return {
       p: price,
       ...(Number.isFinite(previous) && previous > 0 ? { prev: previous } : {}),
-      t: Number.isFinite(stamp) ? stamp : Math.floor(Date.now() / 1000),
+      t: Number.isFinite(stamp) ? stamp : null,
       provider: "Stooq",
       freshness: "provider timestamp; latency not guaranteed"
     };
@@ -201,9 +201,9 @@ async function getQuote(symbol, env) {
     return {
       p: meta.regularMarketPrice,
       prev: meta.chartPreviousClose || meta.previousClose || null,
-      t: meta.regularMarketTime || Math.floor(Date.now() / 1000),
+      t: Number.isFinite(meta.regularMarketTime) ? meta.regularMarketTime : null,
       provider: "Yahoo Finance",
-      freshness: "provider timestamp; real-time entitlement not verified"
+      freshness: Number.isFinite(meta.regularMarketTime) ? "Yahoo provider timestamp; real-time entitlement not verified" : "Yahoo timestamp missing; freshness unavailable"
     };
   }
   return await stooqQuote(symbol);
