@@ -381,7 +381,8 @@ function gauss(r){let u=0,v=0;while(!u)u=r();while(!v)v=r();return Math.sqrt(-2*
 let toastT;function toast(msg,err){const t=$('#toast');t.textContent=msg;t.className='toast show'+(err?' err':'');clearTimeout(toastT);toastT=setTimeout(()=>t.className='toast',2600);}
 
 /* ---------- 4. Market state, ticks ---------- */
-let active=BY.EURUSD, tf=TFS[3], candles=[], source='none', srcName='', loadToken=0;
+let active=BY.EURUSD, tf=TFS[3], candles=[], source='none', srcName='', srcFreshness='', loadToken=0;
+function quoteMaxAge(i){return i.cat==='crypto'?300:i.cat==='forex'?180:1800;}
 const stateSave=()=>{try{localStorage.setItem('fxw.sel',JSON.stringify({s:active.symbol,t:tf[0]}))}catch(e){}};
 
 function tickLoop(){
@@ -412,7 +413,7 @@ function connectBinance(){
       const d=JSON.parse(ev.data).data, i=INSTRUMENTS.find(x=>x.binance===d.s); if(!i)return;
       const b=+d.b,a=+d.a, old=i.mid;
       if(!i.live){i.live=true;i.open=(a+b)/2;wsTry=0;paintStatus();markDots();}
-      i.bid=b;i.ask=a;i.src='Binance';i.closed=false;i.mid=(a+b)/2;i.spread=a-b;i.dir=i.mid>=old?1:-1;
+      i.bid=b;i.ask=a;i.src='Binance';i.t=Date.now()/1000;i.closed=false;i.mid=(a+b)/2;i.spread=a-b;i.dir=i.mid>=old?1:-1;
     }catch(e){}
   };
   const lost=()=>{INSTRUMENTS.forEach(i=>{if(i.binance&&i.live){i.live=false;i.src='';}});paintStatus();markDots();setTimeout(connectBinance,Math.min(30000,5000*(++wsTry)));};
@@ -460,7 +461,7 @@ function connectChartKline(){
 }
 async function loadCandles(){
   const inst=active, my=++loadToken;
-  let c=null, src='none', sn='';
+  let c=null, src='none', sn='', freshness='';
   if(inst.binance){
     $('#loading').classList.add('show');
     try{
@@ -472,12 +473,12 @@ async function loadCandles(){
       if(c.length){src='live';sn='Binance';const l=c[c.length-1].close;if(!inst.live){inst.mid=l;inst.bid=l-inst.spread/2;inst.ask=l+inst.spread/2;inst.base=l;inst.open=l;}}
     }catch(e){c=null;}
   }
-  if(!c){$('#loading').classList.add('show');try{const r=await fetch('/api/candles?s='+encodeURIComponent(ysym(inst))+'&i='+tf[2],{cache:'no-store'});if(r.ok){const j=await r.json();if(Array.isArray(j)&&j.length>20){c=j.filter(x=>x&&[x.time,x.open,x.high,x.low,x.close,x.volume].every(v=>Number.isFinite(Number(v)))&&Number(x.time)>0&&Number(x.open)>0&&Number(x.high)>=Math.max(Number(x.open),Number(x.close),Number(x.low))&&Number(x.low)<=Math.min(Number(x.open),Number(x.close),Number(x.high))).map(x=>({time:Number(x.time),open:Number(x.open),high:Number(x.high),low:Number(x.low),close:Number(x.close),volume:Number(x.volume)})).sort((a,b)=>a.time-b.time);if(c.length>20){src='live';sn='Yahoo Finance';}}}}catch(e){}}
+  if(!c){$('#loading').classList.add('show');try{const r=await fetch('/api/candles?s='+encodeURIComponent(ysym(inst))+'&i='+tf[2],{cache:'no-store'});if(r.ok){const provider=r.headers.get('x-market-data-provider');freshness=r.headers.get('x-market-data-freshness')||'';const j=await r.json();if(Array.isArray(j)&&j.length>20){c=j.filter(x=>x&&[x.time,x.open,x.high,x.low,x.close,x.volume].every(v=>Number.isFinite(Number(v)))&&Number(x.time)>0&&Number(x.open)>0&&Number(x.high)>=Math.max(Number(x.open),Number(x.close),Number(x.low))&&Number(x.low)<=Math.min(Number(x.open),Number(x.close),Number(x.high))).map(x=>({time:Number(x.time),open:Number(x.open),high:Number(x.high),low:Number(x.low),close:Number(x.close),volume:Number(x.volume)})).sort((a,b)=>a.time-b.time);if(c.length>20){src='live';sn=provider||'Unknown provider';}}}}catch(e){}}
   if(my!==loadToken)return;
   $('#loading').classList.remove('show');
   if(!c||!c.length){candles=[];source='none';srcName='';chart.setData([],inst);paintBadge();const L=$('#loading');L.textContent='NO LIVE DATA · retrying… (start with open_fxwolver.bat, internet on)';L.classList.add('show');setTimeout(()=>{if(my===loadToken)loadCandles();},6000);return;}
   $('#loading').textContent='LOADING MARKET DATA…';
-  candles=c;source=src;srcName=sn;chart.setData(c,inst);paintBadge();connectChartKline();
+  candles=c;source=src;srcName=sn;srcFreshness=freshness;chart.setData(c,inst);paintBadge();connectChartKline();
 }
 
 /* ---------- 6. Chart engine (canvas) ---------- */
@@ -676,7 +677,7 @@ function paintBadge(){
   const b=$('#badge'),available=source==='live',binanceLive=available&&srcName==='Binance'&&chartStreamConnected;
   const now=Date.now()/1000,lastCandle=candles.length?candles[candles.length-1].time:0;
   const quoteAge=active.t?now-active.t:Infinity,candleAge=lastCandle?now-lastCandle:Infinity;
-  const staleQuote=available&&active.src!=='Binance'&&quoteAge>1200;
+  const staleQuote=available&&active.src!=='Binance'&&(!Number.isFinite(Number(active.t))||quoteAge>quoteMaxAge(active));
   const staleCandles=available&&srcName!=='Binance'&&candleAge>Math.max(tf[1]*3,tf[1]+120);
   const flatRatio=candles.length?candles.filter(x=>x.open===x.high&&x.high===x.low&&x.low===x.close).length/candles.length:0;
   const cl=available&&active.closed&&active.src!=='Binance';
@@ -717,7 +718,8 @@ function paintAccount(){
 function trade(type){
   const i=active,vol=Math.round((parseFloat($('#lots').value)||0)*100)/100,sl=+$('#sl').value||0,tp=+$('#tp').value||0,px=type==='BUY'?i.ask:i.bid,s=type==='BUY'?1:-1;
   if(!i.live)return toast('No live price yet — cannot trade',1);
-  if(i.closed&&i.src!=='Binance')return toast('Quote is stale or market is closed — paper trading disabled',1);
+  if(i.src!=='Binance'&&(!Number.isFinite(Number(i.t))||Date.now()/1000-Number(i.t)>quoteMaxAge(i)))return toast('Quote is stale or has no valid timestamp — paper trading disabled',1);
+  if(i.closed&&i.src!=='Binance')return toast('Market quote is unavailable or market is closed — paper trading disabled',1);
   if(vol<=0)return toast('Enter lots of 0.01 or more',1);
   if(sl&&(px-sl)*s<=0)return toast('Stop Loss must be '+(s>0?'below':'above')+' the entry price',1);
   if(tp&&(tp-px)*s<=0)return toast('Take Profit must be '+(s>0?'above':'below')+' the entry price',1);
@@ -800,8 +802,8 @@ async function pollQuotes(){
     const list=INSTRUMENTS.filter(i=>i.src!=='Binance'),r=await fetch('/api/quotes?s='+list.map(ysym).join(','),{cache:'no-store'});
     if(!r.ok)throw 0;const j=await r.json();
     list.forEach(i=>{const d=j[ysym(i)];if(!d||!d.p)return;const old=i.mid;
-      i.mid=i.base=d.p;i.bid=d.p;i.ask=d.p;i.spread=0;i.open=d.prev||d.p;i.live=true;i.src='Yahoo Finance';i.t=d.t;
-      i.closed=Date.now()/1000-d.t>(i.cat==='crypto'?300:i.cat==='forex'?1200:1800);i.dir=d.p>=old?1:-1;});
+      i.mid=i.base=d.p;i.bid=d.p;i.ask=d.p;i.spread=0;i.open=d.prev||d.p;i.live=true;i.src=typeof d.provider==='string'?d.provider:'Unknown provider';i.freshness=d.freshness||'Provider freshness not specified';i.t=Number.isFinite(Number(d.t))?Number(d.t):null;
+      i.closed=!Number.isFinite(i.t)||Date.now()/1000-i.t>quoteMaxAge(i);i.dir=d.p>=old?1:-1;});
     markDots();paintStatus();paintBadge();if(!INSTRUMENTS.some(i=>i.live))$('#sMsg').textContent='No data yet — check internet';else $('#sMsg').textContent='Market data connected';
   }catch(e){}
 }
