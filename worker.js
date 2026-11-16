@@ -113,7 +113,7 @@ async function tiingoFxQuote(symbol, env) {
   try {
     const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
       headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
-      cf: { cacheTtl: 0, cacheEverything: false }
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 5, "400-499": 0, "500-599": 0 } }
     });
     noteTiingoResponse(res);
     if (!res.ok) return null;
@@ -147,7 +147,7 @@ async function tiingoFxCandles(symbol, requested, env) {
   try {
     const url = "https://api.tiingo.com/tiingo/fx/" + ticker + "/prices?resampleFreq=" +
       encodeURIComponent(resample);
-    const res = await fetch(url, { headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" }, cf: { cacheTtl: 0, cacheEverything: false } });
+    const res = await fetch(url, { headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" }, cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 60, "400-499": 0, "500-599": 0 } } });
     noteTiingoResponse(res);
     if (!res.ok) return null;
     const payload = await res.json();
@@ -185,7 +185,7 @@ async function tiingoFxCheck(symbol, env) {
   try {
     const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
       headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
-      cf: { cacheTtl: 0, cacheEverything: false }
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 5, "400-499": 0, "500-599": 0 } }
     });
     noteTiingoResponse(res);
     if (!res.ok) {
@@ -302,7 +302,7 @@ export default {
       const result = await tiingoFxCheck(symbol, env);
       const ttl = result.ok ? 5 : result.httpStatus === 429 ? 60 :
         result.httpStatus === 403 ? 300 : 15;
-      return json(result, 200, { "cache-control": "public, max-age=" + ttl });
+      return json(result, 200, { "cache-control": "no-store" });
     }
     if (url.pathname === "/api/health") {
       return json({ ok: true, service: "FXWOLVER market-data API", timestamp: new Date().toISOString() });
