@@ -3,6 +3,20 @@
 // Serves the existing static terminal and proxies market data without exposing secrets.
 // Crypto streaming remains the browser's public Binance WebSocket connection.
 
+// Per-isolate Tiingo circuit breaker: avoid repeatedly hitting a provider that
+// has returned 429. This is a local cooldown, not a globally shared cache.
+let tiingoBlockedUntil = 0;
+const TIINGO_COOLDOWN_MS = 5 * 60 * 1000;
+
+function tiingoIsCoolingDown() {
+  return Date.now() < tiingoBlockedUntil;
+}
+
+function noteTiingoResponse(res) {
+  if (res.status === 429) tiingoBlockedUntil = Date.now() + TIINGO_COOLDOWN_MS;
+  else if (res.ok) tiingoBlockedUntil = 0;
+}
+
 const YAHOO_HEADERS = {
   "Accept": "application/json",
   "User-Agent": "Mozilla/5.0 (compatible; FXWOLVER/1.0; +https://workers.cloudflare.com)"
@@ -95,12 +109,13 @@ function tiingoFxTicker(symbol) {
 
 async function tiingoFxQuote(symbol, env) {
   const ticker = tiingoFxTicker(symbol);
-  if (!ticker || !env?.TIINGO_API_TOKEN) return null;
+  if (!ticker || !env?.TIINGO_API_TOKEN || tiingoIsCoolingDown()) return null;
   try {
     const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
       headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
+    noteTiingoResponse(res);
     if (!res.ok) return null;
     const payload = await res.json();
     const q = Array.isArray(payload) ? payload[0] : payload;
@@ -125,7 +140,7 @@ async function tiingoFxQuote(symbol, env) {
 }
 async function tiingoFxCandles(symbol, requested, env) {
   const ticker = tiingoFxTicker(symbol);
-  if (!ticker || !env?.TIINGO_API_TOKEN) return null;
+  if (!ticker || !env?.TIINGO_API_TOKEN || tiingoIsCoolingDown()) return null;
   const intervals = { "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1hour", "1d": "1day" };
   const resample = intervals[requested] || (requested === "4h" ? "1hour" : null);
   if (!resample) return null;
@@ -133,6 +148,7 @@ async function tiingoFxCandles(symbol, requested, env) {
     const url = "https://api.tiingo.com/tiingo/fx/" + ticker + "/prices?resampleFreq=" +
       encodeURIComponent(resample);
     const res = await fetch(url, { headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" }, cf: { cacheTtl: 0, cacheEverything: false } });
+    noteTiingoResponse(res);
     if (!res.ok) return null;
     const payload = await res.json();
     if (!Array.isArray(payload)) return null;
@@ -163,11 +179,15 @@ async function tiingoFxCheck(symbol, env) {
   const ticker = tiingoFxTicker(symbol);
   if (!ticker) return { ok: false, reason: "unsupported_symbol" };
   if (!env?.TIINGO_API_TOKEN) return { ok: false, reason: "missing_worker_secret" };
+  if (tiingoIsCoolingDown()) {
+    return { ok: false, httpStatus: 429, reason: "rate_limit_or_usage_limit", retryAfterSeconds: Math.ceil((tiingoBlockedUntil - Date.now()) / 1000), note: "Local cooldown after Tiingo 429; provider quota must recover before retrying." };
+  }
   try {
     const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
       headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
       cf: { cacheTtl: 0, cacheEverything: false }
     });
+    noteTiingoResponse(res);
     if (!res.ok) {
       const reasons = { 401: "invalid_or_missing_token", 403: "account_or_endpoint_not_authorized", 429: "rate_limit_or_usage_limit" };
       return { ok: false, httpStatus: res.status, reason: reasons[res.status] || "tiingo_http_error" };
