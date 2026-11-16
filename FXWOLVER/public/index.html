@@ -476,7 +476,7 @@ async function loadCandles(){
   if(!c){$('#loading').classList.add('show');try{const r=await fetch('/api/candles?s='+encodeURIComponent(ysym(inst))+'&i='+tf[2],{cache:'no-store'});if(r.ok){const provider=r.headers.get('x-market-data-provider');freshness=r.headers.get('x-market-data-freshness')||'';const j=await r.json();if(Array.isArray(j)&&j.length>20){c=j.filter(x=>x&&[x.time,x.open,x.high,x.low,x.close,x.volume].every(v=>Number.isFinite(Number(v)))&&Number(x.time)>0&&Number(x.open)>0&&Number(x.high)>=Math.max(Number(x.open),Number(x.close),Number(x.low))&&Number(x.low)<=Math.min(Number(x.open),Number(x.close),Number(x.high))).map(x=>({time:Number(x.time),open:Number(x.open),high:Number(x.high),low:Number(x.low),close:Number(x.close),volume:Number(x.volume)})).sort((a,b)=>a.time-b.time);if(c.length>20){src='live';sn=provider||'Unknown provider';}}}}catch(e){}}
   if(my!==loadToken)return;
   $('#loading').classList.remove('show');
-  if(!c||!c.length){candles=[];source='none';srcName='';chart.setData([],inst);paintBadge();const L=$('#loading');L.textContent='NO LIVE DATA · retrying… (start with open_fxwolver.bat, internet on)';L.classList.add('show');setTimeout(()=>{if(my===loadToken)loadCandles();},6000);return;}
+  if(!c||!c.length){candles=[];source='none';srcName='';srcFreshness='';chart.setData([],inst);paintBadge();const L=$('#loading');L.textContent='NO LIVE DATA · retrying… (start with open_fxwolver.bat, internet on)';L.classList.add('show');setTimeout(()=>{if(my===loadToken)loadCandles();},6000);return;}
   $('#loading').textContent='LOADING MARKET DATA…';
   candles=c;source=src;srcName=sn;srcFreshness=freshness;chart.setData(c,inst);paintBadge();connectChartKline();
 }
@@ -665,7 +665,7 @@ function select(i,mobile){
   $$('.mw-row').forEach(r=>r.classList.toggle('on',r.dataset.sym===i.symbol));
   $('#tSym').textContent=i.symbol;$('#tCat').textContent=CAT_LABEL[i.cat];$('#wm').textContent=i.symbol;
   paintQuote();
-  candles=[];source='none';srcName='';chart.setData([],i);paintBadge();
+  candles=[];source='none';srcName='';srcFreshness='';chart.setData([],i);paintBadge();
   loadCandles();
   if(mobile&&window.innerWidth<=900)setView('chart');
 }
@@ -688,7 +688,7 @@ function paintBadge(){
     flatRatio>0.8&&srcName!=='Binance'?'LIMITED OHLC DATA <u>'+Math.round(flatRatio*100)+'% flat candles · provider range unavailable</u>':
     binanceLive?'● LIVE <u>Binance native OHLCV WebSocket</u>':
     srcName==='Binance'?'BINANCE HISTORY <u>connecting to live candle stream</u>':
-    'REFERENCE FEED <u>'+srcName+' · real-time entitlement/latency not verified</u>';
+    'REFERENCE FEED <u>quote: '+active.src+' · '+(active.freshness||'freshness unverified')+'; chart: '+srcName+' · '+(srcFreshness||'freshness unverified')+'</u>';
 }
 function paintStatus(){
   const s=c=>{const l=INSTRUMENTS.filter(i=>i.cat===c&&i.live);if(!l.length)return '<b class="warn">OFFLINE</b>';const x=l.find(i=>i.src==='Binance'&&!i.closed);return x?'<b class="ok">LIVE · Binance</b>':'<b class="warn">REFERENCE · '+(l[0].src||'provider')+'</b>';};
@@ -813,7 +813,7 @@ $('#reset').onclick=()=>{acct={balance:10000,positions:[],history:[],id:1};save(
 $('#bBuy').onclick=()=>trade('BUY');$('#bSell').onclick=()=>trade('SELL');
 
 /* ---------- 10. Boot ---------- */
-function clock(){const d=new Date(),p=v=>String(v).padStart(2,'0');$('#clock').textContent='UTC '+d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())+' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());}
+function clock(){const d=new Date(),p=v=>String(v).padStart(2,'0');$('#clock').textContent='UTC '+d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())+' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());paintBadge();}
 buildWatch();buildTfs();markDots();paintStatus();clock();setInterval(clock,1000);
 try{const s=JSON.parse(localStorage.getItem('fxw.sel')||'null');if(s){if(BY[s.s])active=BY[s.s];const t=TFS.find(x=>x[0]===s.t);if(t){tf=t;buildTfs();}}}catch(e){}
 cat=active.cat;applyFilter();
