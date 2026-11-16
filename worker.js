@@ -93,77 +93,16 @@ function tiingoFxTicker(symbol) {
   return match ? (match[1] + match[2]).toLowerCase() : null;
 }
 
-/*
- * Cache Tiingo responses at each Cloudflare edge location.
- * Successful quotes: short cache; candles: longer cache.
- * 429/403 responses are briefly cached too, preventing repeated failing
- * requests from consuming more of the provider's quota.
- */
-async function tiingoCachedJson(url, env, successTtlSeconds) {
-  const token = env?.TIINGO_API_TOKEN;
-  if (!token) return { status: 0, payload: null };
-
-  let tokenTag = "unknown";
-  try {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-    tokenTag = [...new Uint8Array(digest).slice(0, 8)]
-      .map(byte => byte.toString(16).padStart(2, "0")).join("");
-  } catch {}
-
-  const cacheKey = new Request(
-    "https://fxwolver-cache.invalid/tiingo/" + tokenTag + "?url=" + encodeURIComponent(url),
-    { method: "GET" }
-  );
-  const cache = caches.default;
-
-  try {
-    const cached = await cache.match(cacheKey);
-    if (cached) return await cached.json();
-  } catch {}
-
-  let response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        "Authorization": "Token " + token,
-        "Accept": "application/json"
-      },
-      cf: { cacheTtl: 0, cacheEverything: false }
-    });
-  } catch {
-    return { status: 0, payload: null };
-  }
-
-  let payload = null;
-  if (response.ok) {
-    try { payload = await response.json(); } catch {}
-  }
-
-  const result = { status: response.status, payload };
-  const ttl = response.ok ? successTtlSeconds :
-    response.status === 429 ? 60 :
-    response.status === 403 ? 300 : 15;
-
-  try {
-    await cache.put(cacheKey, new Response(JSON.stringify(result), {
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "public, max-age=" + ttl
-      }
-    }));
-  } catch {}
-
-  return result;
-}
 async function tiingoFxQuote(symbol, env) {
   const ticker = tiingoFxTicker(symbol);
   if (!ticker || !env?.TIINGO_API_TOKEN) return null;
   try {
-    const result = await tiingoCachedJson(
-      "https://api.tiingo.com/tiingo/fx/" + ticker + "/top", env, 5
-    );
-    if (result.status !== 200) return null;
-    const payload = result.payload;
+    const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
+      headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!res.ok) return null;
+    const payload = await res.json();
     const q = Array.isArray(payload) ? payload[0] : payload;
     if (!q) return null;
     const bid = Number(q.bidPrice), ask = Number(q.askPrice);
@@ -193,9 +132,9 @@ async function tiingoFxCandles(symbol, requested, env) {
   try {
     const url = "https://api.tiingo.com/tiingo/fx/" + ticker + "/prices?resampleFreq=" +
       encodeURIComponent(resample);
-    const result = await tiingoCachedJson(url, env, 60);
-    if (result.status !== 200) return null;
-    const payload = result.payload;
+    const res = await fetch(url, { headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" }, cf: { cacheTtl: 0, cacheEverything: false } });
+    if (!res.ok) return null;
+    const payload = await res.json();
     if (!Array.isArray(payload)) return null;
     let rows = payload.map(q => ({
       time: Math.floor(Date.parse(q.date) / 1000),
@@ -225,18 +164,15 @@ async function tiingoFxCheck(symbol, env) {
   if (!ticker) return { ok: false, reason: "unsupported_symbol" };
   if (!env?.TIINGO_API_TOKEN) return { ok: false, reason: "missing_worker_secret" };
   try {
-    const result = await tiingoCachedJson(
-      "https://api.tiingo.com/tiingo/fx/" + ticker + "/top", env, 5
-    );
-    if (result.status !== 200) {
+    const res = await fetch("https://api.tiingo.com/tiingo/fx/" + ticker + "/top", {
+      headers: { "Authorization": "Token " + env.TIINGO_API_TOKEN, "Accept": "application/json" },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!res.ok) {
       const reasons = { 401: "invalid_or_missing_token", 403: "account_or_endpoint_not_authorized", 429: "rate_limit_or_usage_limit" };
-      return {
-        ok: false,
-        ...(result.status ? { httpStatus: result.status } : {}),
-        reason: reasons[result.status] || "tiingo_http_error"
-      };
+      return { ok: false, httpStatus: res.status, reason: reasons[res.status] || "tiingo_http_error" };
     }
-    const payload = result.payload;
+    const payload = await res.json();
     const q = Array.isArray(payload) ? payload[0] : payload;
     if (!q) return { ok: false, httpStatus: 200, reason: "empty_tiingo_response" };
     const bid = Number(q.bidPrice), ask = Number(q.askPrice), mid = Number(q.midPrice);
@@ -281,7 +217,7 @@ async function quotes(request, env) {
   const entries = await Promise.all(symbols.map(async symbol => [symbol, await getQuote(symbol, env)]));
   const result = {};
   for (const [symbol, value] of entries) if (value) result[symbol] = value;
-  return json(result, 200, { "cache-control": "public, max-age=2, stale-while-revalidate=5" });
+  return json(result, 200, { "cache-control": "public, max-age=5" });
 }
 
 async function candles(request, env) {
@@ -291,7 +227,7 @@ async function candles(request, env) {
   if (!symbol || symbol.length > 32) return json({ error: "A valid s symbol is required" }, 400);
   const institutionalFxCandles = await tiingoFxCandles(symbol, requested, env);
   if (institutionalFxCandles) return json(institutionalFxCandles, 200, {
-    "cache-control": "public, max-age=2, stale-while-revalidate=5",
+    "cache-control": "public, max-age=60",
     "x-market-data-provider": "Tiingo FX",
     "x-market-data-freshness": "licensed FX historical OHLC"
   });
@@ -332,7 +268,7 @@ async function candles(request, env) {
     rows = [...buckets.values()];
   }
   return json(rows.slice(-500), 200, {
-    "cache-control": "public, max-age=5, stale-while-revalidate=10",
+    "cache-control": "public, max-age=15",
     "x-market-data-provider": "Yahoo Finance",
     "x-market-data-freshness": "provider timestamp; real-time entitlement not verified"
   });
@@ -343,7 +279,10 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/api/tiingo-check" && request.method === "GET") {
       const symbol = url.searchParams.get("s") || "EURUSD=X";
-      return json(await tiingoFxCheck(symbol, env));
+      const result = await tiingoFxCheck(symbol, env);
+      const ttl = result.ok ? 5 : result.httpStatus === 429 ? 60 :
+        result.httpStatus === 403 ? 300 : 15;
+      return json(result, 200, { "cache-control": "public, max-age=" + ttl });
     }
     if (url.pathname === "/api/health") {
       return json({ ok: true, service: "FXWOLVER market-data API", timestamp: new Date().toISOString() });
