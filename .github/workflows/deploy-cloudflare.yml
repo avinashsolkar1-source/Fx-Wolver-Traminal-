@@ -21,6 +21,12 @@ jobs:
         with:
           node-version: 22
 
+      - name: Validate Worker JavaScript syntax
+        run: node --check worker.js
+
+      - name: Verify frontend entrypoint exists
+        run: test -s FXWOLVER/public/index.html
+
       - name: Deploy Worker and static assets
         run: npx --yes wrangler@latest deploy
         env:
